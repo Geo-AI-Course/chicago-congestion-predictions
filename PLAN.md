@@ -7,16 +7,17 @@
 
 ## Milestone 1 — Environment & Project Structure
 
-- [ ] Create `requirements.txt` / `environment.yml` with all dependencies
+- [x] Create `requirements.txt` / `environment.yml` with all dependencies
   - `osmnx`, `geopandas`, `shapely`, `psycopg2-binary`, `sqlalchemy`, `geoalchemy2`
   - `pandas`, `numpy`, `scikit-learn`, `matplotlib`, `folium`
-- [ ] Spin up PostGIS via Docker (`postgis/postgis` image), write `docker-compose.yml`
-- [ ] Scaffold project directory layout:
+- [x] Spin up PostGIS via Docker (`postgis/postgis` image), write `docker-compose.yml`
+- [x] Scaffold project directory layout:
   ```
   congestion-predictions/
   ├── data/           # raw downloads
   ├── notebooks/      # exploratory notebooks
   ├── src/
+  │   ├── db.py       # shared DB engine + PostGIS helpers
   │   ├── ingest.py   # data loading & PostGIS writes
   │   ├── features.py # feature engineering
   │   ├── model.py    # training & evaluation

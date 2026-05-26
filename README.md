@@ -14,13 +14,32 @@ Predict congestion scores on Chicago road segments using OSM road network featur
 docker compose up -d
 ```
 
+> **Windows:** Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and ensure it is running before this step. WSL2 backend is recommended.
+
 ### 2. Set up Python environment
 
+**macOS / Linux**
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+**Windows (Command Prompt)**
+```cmd
+python -m venv .venv
+.venv\Scripts\activate.bat
+pip install -r requirements.txt
+```
+
+**Windows (PowerShell)**
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+> **PowerShell note:** If you see an error about execution policy, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, then retry.
 
 ### 3. Verify the database connection
 
