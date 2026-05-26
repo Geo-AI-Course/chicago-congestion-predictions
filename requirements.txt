@@ -1,0 +1,26 @@
+# Geospatial
+osmnx==1.9.3
+geopandas==0.14.4
+shapely==2.0.4
+pyproj==3.6.1
+fiona==1.9.6
+
+# Database
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.30
+geoalchemy2==0.15.1
+
+# Data / ML
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.0
+joblib==1.4.2
+
+# Visualisation
+matplotlib==3.9.0
+folium==0.16.0
+
+# Utilities
+python-dotenv==1.0.1
+requests==2.32.3
+pyarrow==16.1.0

@@ -90,6 +90,31 @@
 
 ---
 
+## Milestone 7 — Future Bottleneck Prediction via Population Growth
+
+- [ ] **Population data acquisition**
+  - Download Chicago Community Area population estimates from the [Chicago Data Portal — Community Area Profiles](https://data.cityofchicago.org/Health-Human-Services/Chicago-Community-Area-Profiles/3ekn-bfbs)
+  - Download or derive growth projections: CMAP (Chicago Metropolitan Agency for Planning) 2050 population forecasts by community area
+  - Write both to PostGIS tables `community_areas` (geometry: `MULTIPOLYGON`) and `population_projections`
+- [ ] **Spatial join: road segments → community areas**
+  - For each road segment centroid, assign it to its containing community area using PostGIS `ST_Within` / `ST_Contains`
+  - Store `community_area_id` on `road_segments`
+- [ ] **Growth-adjusted feature matrix**
+  - Compute **growth multiplier** per community area: `projected_population / current_population`
+  - Add `growth_multiplier` and `current_population_density` as features in the segment feature table
+  - Scale current `avg_volume` by the growth multiplier to produce `projected_volume`
+- [ ] **Scenario model**
+  - Train a second Random Forest (or reuse M5 model) using `projected_volume` as the target
+  - Compare predicted congestion scores under current vs. projected-growth scenarios
+  - Identify segments whose predicted score increases by more than a threshold (e.g., +0.15) — these are **emerging bottlenecks**
+- [ ] **Visualisation**
+  - Choropleth layer: community areas shaded by population growth rate
+  - Road layer: segments colored by score delta (current → projected)
+  - Highlight top-10 emerging bottleneck segments with distinct styling
+  - Export as `data/future_congestion_map.html`
+
+---
+
 ## Notes
 
 - All spatial data stored in **SRID 4326** (WGS84); reproject to **EPSG:26916** (UTM zone 16N, Illinois) for distance/area calculations.
