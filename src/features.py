@@ -12,29 +12,53 @@ SNAP_TOLERANCE_M = 50  # metres; snapping tolerance for traffic → segment join
 
 
 def snap_traffic_to_segments(engine=None):
-    """Spatial join: traffic count points → nearest road segment."""
+    """Snap each traffic count point to its nearest road segment within tolerance."""
     engine = engine or get_engine()
     sql = text("""
-        UPDATE traffic_counts tc
-        SET    segment_id = rs.segment_id
-        FROM   road_segments rs
-        WHERE  ST_DWithin(
-                   tc.geometry::geography,
-                   rs.geometry::geography,
-                   :tol
-               )
-          AND  tc.segment_id IS NULL
-        -- pick the single nearest segment
-        AND rs.segment_id = (
-            SELECT rs2.segment_id
-            FROM   road_segments rs2
-            ORDER  BY tc.geometry <-> rs2.geometry
-            LIMIT  1
+        WITH snapped AS (
+            SELECT tc.tc_id,
+                   closest.segment_id
+            FROM   traffic_counts tc
+            CROSS JOIN LATERAL (
+                SELECT rs.segment_id
+                FROM   road_segments rs
+                WHERE  ST_DWithin(
+                           tc.geometry::geography,
+                           rs.geometry::geography,
+                           :tol
+                       )
+                ORDER  BY tc.geometry <-> rs.geometry
+                LIMIT  1
+            ) AS closest
+            WHERE tc.segment_id IS NULL
         )
+        UPDATE traffic_counts tc
+        SET    segment_id = s.segment_id
+        FROM   snapped s
+        WHERE  tc.tc_id = s.tc_id
     """)
     with engine.connect() as conn:
-        conn.execute(sql, {"tol": SNAP_TOLERANCE_M})
+        result = conn.execute(sql, {"tol": SNAP_TOLERANCE_M})
         conn.commit()
+        print(f"Snapped {result.rowcount} traffic count points to road segments.")
+
+
+def _intersection_density(engine) -> pd.DataFrame:
+    """Count intersection nodes within 100 m of each segment centroid."""
+    sql = text("""
+        SELECT rs.segment_id,
+               COUNT(n.osmid) AS intersection_density
+        FROM   road_segments rs
+        LEFT JOIN intersection_nodes n
+            ON ST_DWithin(
+                   ST_Centroid(rs.geometry)::geography,
+                   n.geometry::geography,
+                   100
+               )
+        GROUP BY rs.segment_id
+    """)
+    with engine.connect() as conn:
+        return pd.read_sql(sql, conn)
 
 
 def build_feature_matrix(engine=None) -> pd.DataFrame:
@@ -44,12 +68,12 @@ def build_feature_matrix(engine=None) -> pd.DataFrame:
         SELECT
             rs.segment_id,
             rs.highway,
-            COALESCE(rs.lanes::float, NULL)          AS lanes,
+            rs.lanes::float                              AS lanes,
             rs.maxspeed,
             rs.length,
-            rs.oneway::int                            AS oneway,
-            AVG(tc.total_passing_vehicle_volume::float) AS avg_volume,
-            MAX(tc.total_passing_vehicle_volume::float) AS max_volume
+            rs.oneway::int                               AS oneway,
+            AVG(tc.total_passing_vehicle_volume::float)  AS avg_volume,
+            MAX(tc.total_passing_vehicle_volume::float)  AS max_volume
         FROM   road_segments rs
         LEFT JOIN traffic_counts tc USING (segment_id)
         GROUP  BY rs.segment_id, rs.highway, rs.lanes,
@@ -62,17 +86,18 @@ def build_feature_matrix(engine=None) -> pd.DataFrame:
     highway_dummies = pd.get_dummies(df["highway"], prefix="hw")
     df = pd.concat([df.drop(columns="highway"), highway_dummies], axis=1)
 
-    # --- fill missing lanes with median per highway type (already dropped) ---
+    # --- fill missing lanes with median ---
     df["lanes"] = df["lanes"].fillna(df["lanes"].median())
 
-    # --- parse maxspeed (e.g. "30 mph" → 30) ---
-    df["speed_limit"] = (
-        df["maxspeed"]
-        .str.extract(r"(\d+)")[0]
-        .astype(float)
-        .fillna(df["maxspeed"].str.extract(r"(\d+)")[0].astype(float).median())
-    )
+    # --- parse maxspeed (e.g. "30 mph" → 30.0) ---
+    extracted = df["maxspeed"].str.extract(r"(\d+)")[0].astype(float)
+    df["speed_limit"] = extracted.fillna(extracted.median())
     df = df.drop(columns="maxspeed")
+
+    # --- intersection density ---
+    density = _intersection_density(engine)
+    df = df.merge(density, on="segment_id", how="left")
+    df["intersection_density"] = df["intersection_density"].fillna(0).astype(int)
 
     # --- target: normalised congestion score [0, 1] ---
     df["congestion_score"] = (

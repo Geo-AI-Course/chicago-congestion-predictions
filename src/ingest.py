@@ -3,45 +3,101 @@
 Usage:
     python src/ingest.py
 """
+import pandas as pd
 import osmnx as ox
 import geopandas as gpd
-import pandas as pd
+from sqlalchemy import text
 from db import get_engine, ensure_postgis
 
 CHICAGO = "Chicago, Illinois, USA"
 TRAFFIC_URL = (
-    "https://data.cityofchicago.org/api/geospatial/pfsx-4HKf"
-    "?method=export&type=geojson"
+    "https://data.cityofchicago.org/resource/pfsx-4n4m.geojson"
+    "?$limit=2000"
 )
 
 
 def fetch_road_network(place: str = CHICAGO):
+    """Returns (edges GeoDataFrame with segment_id, intersection nodes GeoDataFrame)."""
     G = ox.graph_from_place(place, network_type="drive")
-    _, edges = ox.graph_to_gdfs(G)
+    nodes, edges = ox.graph_to_gdfs(G)
+
+    # Intersection nodes: degree >= 3 in the undirected sense
+    undirected = G.to_undirected()
+    degree = dict(undirected.degree())
+    nodes = nodes.reset_index()
+    nodes["degree"] = nodes["osmid"].map(degree)
+    intersections = nodes[nodes["degree"] >= 3][["osmid", "geometry"]].copy()
+
     edges = edges.reset_index()
     edges = edges[["u", "v", "key", "highway", "lanes", "maxspeed",
-                   "length", "oneway", "name", "geometry"]]
+                   "length", "oneway", "name", "geometry"]].copy()
+
     edges["highway"] = edges["highway"].apply(
         lambda x: x[0] if isinstance(x, list) else x
     )
-    return edges
+    edges["lanes"] = edges["lanes"].apply(_parse_lanes)
+
+    # sequential 1-based segment_id
+    edges.insert(0, "segment_id", range(1, len(edges) + 1))
+
+    return edges, intersections
+
+
+def _parse_lanes(val):
+    if pd.isna(val) if not isinstance(val, list) else False:
+        return None
+    s = val[0] if isinstance(val, list) else val
+    try:
+        return int(str(s).split(";")[0].strip())
+    except (ValueError, AttributeError):
+        return None
 
 
 def fetch_traffic_counts(url: str = TRAFFIC_URL) -> gpd.GeoDataFrame:
-    return gpd.read_file(url)
+    gdf = gpd.read_file(url)
+    print(f"Traffic count columns: {list(gdf.columns)}")
+    gdf = gdf.reset_index(drop=True)
+    gdf.insert(0, "tc_id", range(1, len(gdf) + 1))
+    gdf["segment_id"] = pd.array([pd.NA] * len(gdf), dtype=pd.Int64Dtype())
+    return gdf
 
 
 def write_road_segments(gdf: gpd.GeoDataFrame, engine=None):
     engine = engine or get_engine()
     gdf.to_postgis("road_segments", engine, if_exists="replace",
                    index=False, chunksize=500)
+    with engine.connect() as conn:
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS road_segments_geom_idx "
+            "ON road_segments USING GIST(geometry)"
+        ))
+        conn.commit()
     print(f"Wrote {len(gdf)} road segments to PostGIS.")
+
+
+def write_intersection_nodes(gdf: gpd.GeoDataFrame, engine=None):
+    engine = engine or get_engine()
+    gdf.to_postgis("intersection_nodes", engine, if_exists="replace",
+                   index=False, chunksize=500)
+    with engine.connect() as conn:
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS intersection_nodes_geom_idx "
+            "ON intersection_nodes USING GIST(geometry)"
+        ))
+        conn.commit()
+    print(f"Wrote {len(gdf)} intersection nodes to PostGIS.")
 
 
 def write_traffic_counts(gdf: gpd.GeoDataFrame, engine=None):
     engine = engine or get_engine()
     gdf.to_postgis("traffic_counts", engine, if_exists="replace",
                    index=False, chunksize=500)
+    with engine.connect() as conn:
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS traffic_counts_geom_idx "
+            "ON traffic_counts USING GIST(geometry)"
+        ))
+        conn.commit()
     print(f"Wrote {len(gdf)} traffic count records to PostGIS.")
 
 
@@ -50,8 +106,9 @@ if __name__ == "__main__":
     ensure_postgis(engine)
 
     print("Fetching road network …")
-    edges = fetch_road_network()
+    edges, intersections = fetch_road_network()
     write_road_segments(edges, engine)
+    write_intersection_nodes(intersections, engine)
 
     print("Fetching traffic counts …")
     counts = fetch_traffic_counts()

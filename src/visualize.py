@@ -9,6 +9,7 @@ import numpy as np
 import joblib
 import folium
 import matplotlib.pyplot as plt
+import matplotlib
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from sqlalchemy import text
@@ -56,7 +57,7 @@ def interactive_map(gdf: gpd.GeoDataFrame, out: str = MAP_OUT):
     m = folium.Map(location=center, zoom_start=12, tiles="CartoDB positron")
 
     norm = mcolors.Normalize(vmin=0, vmax=1)
-    colormap = cm.get_cmap("RdYlGn_r")
+    colormap = matplotlib.colormaps["RdYlGn_r"]
 
     top_segments = gdf_wgs.nlargest(TOP_N, "predicted_score")["segment_id"]
 
