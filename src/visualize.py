@@ -59,12 +59,12 @@ def interactive_map(gdf: gpd.GeoDataFrame, out: str = MAP_OUT):
     norm = mcolors.Normalize(vmin=0, vmax=1)
     colormap = matplotlib.colormaps["RdYlGn_r"]
 
-    top_segments = gdf_wgs.nlargest(TOP_N, "predicted_score")["segment_id"]
+    top_ids = set(gdf_wgs.nlargest(TOP_N, "predicted_score")["segment_id"])
 
     for _, row in gdf_wgs.iterrows():
         rgba = colormap(norm(row["predicted_score"]))
         color = mcolors.to_hex(rgba)
-        weight = 5 if row["segment_id"] in top_segments.values else 2
+        weight = 5 if row["segment_id"] in top_ids else 2
         folium.GeoJson(
             row["geometry"].__geo_interface__,
             style_function=lambda _, c=color, w=weight: {

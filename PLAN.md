@@ -32,62 +32,62 @@
 
 ## Milestone 2 — Data Acquisition
 
-- [ ] Fetch Chicago road network with `osmnx.graph_from_place("Chicago, Illinois, USA")`
+- [x] Fetch Chicago road network with `osmnx.graph_from_place("Chicago, Illinois, USA")`
   - Convert to GeoDataFrame of edges (road segments) and nodes (intersections)
   - Inspect key attributes: `highway`, `lanes`, `maxspeed`, `length`, `oneway`
-- [ ] Download Chicago Traffic Count dataset from the city open data portal
+- [x] Download Chicago Traffic Count dataset from the city open data portal
   - Source: [Chicago Data Portal — Average Daily Traffic Counts](https://data.cityofchicago.org/Transportation/Average-Daily-Traffic-Counts/pfsx-4HKf)
   - Columns of interest: location point, total volume, street name, direction
-- [ ] Exploratory notebook: distributions, CRS checks, missing value audit
+- [x] Exploratory notebook: distributions, CRS checks, missing value audit
 
 ---
 
 ## Milestone 3 — PostGIS Integration
 
-- [ ] Write OSM edges GeoDataFrame to PostGIS table `road_segments` (geometry: `LINESTRING`, SRID 4326)
-- [ ] Write traffic count points to PostGIS table `traffic_counts` (geometry: `POINT`, SRID 4326)
-- [ ] Spatial join: for each traffic count point, snap it to the nearest road segment
+- [x] Write OSM edges GeoDataFrame to PostGIS table `road_segments` (geometry: `LINESTRING`, SRID 4326)
+- [x] Write traffic count points to PostGIS table `traffic_counts` (geometry: `POINT`, SRID 4326)
+- [x] Spatial join: for each traffic count point, snap it to the nearest road segment
   - Use PostGIS `ST_DWithin` + `ST_Distance` to find nearest edge within a tolerance
   - Result: `traffic_counts` rows enriched with `segment_id`
-- [ ] Aggregate counts per segment (avg/max volume where multiple counts map to one segment)
-- [ ] Verify join quality: % of traffic points successfully matched, visual spot-check
+- [x] Aggregate counts per segment (avg/max volume where multiple counts map to one segment)
+- [x] Verify join quality: % of traffic points successfully matched, visual spot-check
 
 ---
 
 ## Milestone 4 — Feature Engineering
 
-- [ ] **Road type** — one-hot encode `highway` (motorway, trunk, primary, secondary, residential, …)
-- [ ] **Lane count** — integer, fill missing with median per highway type
-- [ ] **Speed limit** — parse `maxspeed`, fill missing with OSM defaults per type
-- [ ] **Segment length** — from edge geometry (meters)
-- [ ] **Intersection density** — count of OSM nodes (degree ≥ 3) within 100 m buffer of each segment, using PostGIS `ST_Buffer` + spatial join
-- [ ] **One-way flag** — binary from `oneway` attribute
-- [ ] **Target variable** — normalize traffic volume to a 0–1 congestion score (or threshold top-25% as binary bottleneck)
-- [ ] Write final feature matrix to PostGIS table `segment_features`; also export as `data/features.parquet`
+- [x] **Road type** — one-hot encode `highway` (motorway, trunk, primary, secondary, residential, …)
+- [x] **Lane count** — integer, fill missing with median per highway type
+- [x] **Speed limit** — parse `maxspeed`, fill missing with OSM defaults per type
+- [x] **Segment length** — from edge geometry (meters)
+- [x] **Intersection density** — count of OSM nodes (degree ≥ 3) within 100 m buffer of each segment, using PostGIS `ST_Buffer` + spatial join
+- [x] **One-way flag** — binary from `oneway` attribute
+- [x] **Target variable** — normalize traffic volume to a 0–1 congestion score (or threshold top-25% as binary bottleneck)
+- [x] Write final feature matrix to PostGIS table `segment_features`; also export as `data/features.parquet`
 
 ---
 
 ## Milestone 5 — Model Training & Evaluation
 
-- [ ] Load `features.parquet`, define `X` (features) and `y` (congestion score / label)
-- [ ] Train/test split (80/20), stratify if binary classification
-- [ ] Baseline: predict mean volume (regression) or majority class (classification)
-- [ ] Train Random Forest — tune `n_estimators`, `max_depth` via cross-validation
-- [ ] Evaluate:
+- [x] Load `features.parquet`, define `X` (features) and `y` (congestion score / label)
+- [x] Train/test split (80/20), stratify if binary classification
+- [x] Baseline: predict mean volume (regression) or majority class (classification)
+- [x] Train Random Forest — tune `n_estimators`, `max_depth` via cross-validation
+- [x] Evaluate:
   - Regression: RMSE, MAE, R²
   - Classification (if binary): accuracy, F1, ROC-AUC, confusion matrix
-- [ ] Feature importance plot — identify which road attributes drive predictions most
-- [ ] Save trained model to `data/model.joblib`
+- [x] Feature importance plot — identify which road attributes drive predictions most
+- [x] Save trained model to `data/model.joblib`
 
 ---
 
 ## Milestone 6 — Visualization & Analysis
 
-- [ ] Merge predictions back onto road segment geometries
-- [ ] Static map: color road segments by predicted congestion score using `geopandas` + `matplotlib`
-- [ ] Interactive map: `folium` choropleth overlay, tooltips showing segment name + predicted score
-- [ ] Highlight top-10 predicted bottleneck segments on the map
-- [ ] Export final map as `data/congestion_map.html`
+- [x] Merge predictions back onto road segment geometries
+- [x] Static map: color road segments by predicted congestion score using `geopandas` + `matplotlib`
+- [x] Interactive map: `folium` choropleth overlay, tooltips showing segment name + predicted score
+- [x] Highlight top-10 predicted bottleneck segments on the map
+- [x] Export final map as `data/congestion_map.html`
 
 ---
 

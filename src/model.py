@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import joblib
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
 
@@ -55,14 +55,18 @@ if __name__ == "__main__":
     baseline_pred = np.full(len(y_test), y_train.mean())
     evaluate(y_test, baseline_pred, label="Baseline")
 
-    # Random Forest
-    rf = RandomForestRegressor(n_estimators=200, max_depth=10,
-                               n_jobs=-1, random_state=42)
-    cv_scores = cross_val_score(rf, X_train, y_train,
-                                cv=5, scoring="r2", n_jobs=-1)
-    print(f"CV R² scores: {cv_scores.round(4)}  mean={cv_scores.mean():.4f}")
-
-    rf.fit(X_train, y_train)
+    # Random Forest — tune n_estimators and max_depth via 5-fold CV
+    param_grid = {
+        "n_estimators": [100, 200, 300],
+        "max_depth": [5, 10, None],
+    }
+    grid = GridSearchCV(
+        RandomForestRegressor(n_jobs=-1, random_state=42),
+        param_grid, cv=5, scoring="r2", n_jobs=-1, refit=True,
+    )
+    grid.fit(X_train, y_train)
+    print(f"Best params: {grid.best_params_}  CV R²={grid.best_score_:.4f}")
+    rf = grid.best_estimator_
     evaluate(y_test, rf.predict(X_test), label="RandomForest")
 
     plot_feature_importance(rf, list(X.columns))

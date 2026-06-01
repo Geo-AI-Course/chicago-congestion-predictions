@@ -4,7 +4,6 @@ Usage:
     python src/features.py
 """
 import pandas as pd
-import numpy as np
 from sqlalchemy import text
 from db import get_engine
 
@@ -61,6 +60,21 @@ def _intersection_density(engine) -> pd.DataFrame:
         return pd.read_sql(sql, conn)
 
 
+def verify_join_quality(engine=None) -> float:
+    """Report what fraction of traffic count points were snapped to a segment."""
+    engine = engine or get_engine()
+    sql = text("""
+        SELECT COUNT(*) AS total, COUNT(segment_id) AS matched
+        FROM   traffic_counts
+    """)
+    with engine.connect() as conn:
+        row = conn.execute(sql).fetchone()
+    total, matched = row.total, row.matched
+    pct = 100.0 * matched / total if total else 0.0
+    print(f"Join quality: {matched}/{total} traffic points matched ({pct:.1f}%)")
+    return pct
+
+
 def build_feature_matrix(engine=None) -> pd.DataFrame:
     """Join road attributes with aggregated traffic volume."""
     engine = engine or get_engine()
@@ -82,12 +96,15 @@ def build_feature_matrix(engine=None) -> pd.DataFrame:
     with engine.connect() as conn:
         df = pd.read_sql(sql, conn)
 
+    # --- fill missing lanes with median per highway type, then global fallback ---
+    df["lanes"] = df.groupby("highway")["lanes"].transform(
+        lambda x: x.fillna(x.median())
+    )
+    df["lanes"] = df["lanes"].fillna(df["lanes"].median())
+
     # --- one-hot encode highway type ---
     highway_dummies = pd.get_dummies(df["highway"], prefix="hw")
     df = pd.concat([df.drop(columns="highway"), highway_dummies], axis=1)
-
-    # --- fill missing lanes with median ---
-    df["lanes"] = df["lanes"].fillna(df["lanes"].median())
 
     # --- parse maxspeed (e.g. "30 mph" → 30.0) ---
     extracted = df["maxspeed"].str.extract(r"(\d+)")[0].astype(float)
@@ -118,6 +135,7 @@ if __name__ == "__main__":
     engine = get_engine()
     print("Snapping traffic counts to road segments …")
     snap_traffic_to_segments(engine)
+    verify_join_quality(engine)
     print("Building feature matrix …")
     df = build_feature_matrix(engine)
     save_features(df, engine)
