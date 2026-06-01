@@ -7,7 +7,7 @@ import pandas as pd
 from sqlalchemy import text
 from db import get_engine
 
-SNAP_TOLERANCE_M = 50  # metres; snapping tolerance for traffic → segment join
+SNAP_TOLERANCE_M = 150  # metres; snapping tolerance for traffic → segment join
 
 
 def snap_traffic_to_segments(engine=None):

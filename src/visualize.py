@@ -18,7 +18,6 @@ from db import get_engine
 MODEL_PATH = "data/model.joblib"
 FEATURE_PATH = "data/features.parquet"
 MAP_OUT = "data/congestion_map.html"
-TOP_N = 10
 
 
 def load_predictions(engine=None) -> gpd.GeoDataFrame:
@@ -56,19 +55,17 @@ def interactive_map(gdf: gpd.GeoDataFrame, out: str = MAP_OUT):
               gdf_wgs.geometry.centroid.x.mean()]
     m = folium.Map(location=center, zoom_start=12, tiles="CartoDB positron")
 
-    norm = mcolors.Normalize(vmin=0, vmax=1)
+    vmax = gdf_wgs["predicted_score"].quantile(0.99)  # cap at 99th pct to avoid outlier washout
+    norm = mcolors.Normalize(vmin=0, vmax=max(vmax, 1e-6))
     colormap = matplotlib.colormaps["RdYlGn_r"]
-
-    top_ids = set(gdf_wgs.nlargest(TOP_N, "predicted_score")["segment_id"])
 
     for _, row in gdf_wgs.iterrows():
         rgba = colormap(norm(row["predicted_score"]))
         color = mcolors.to_hex(rgba)
-        weight = 5 if row["segment_id"] in top_ids else 2
         folium.GeoJson(
             row["geometry"].__geo_interface__,
-            style_function=lambda _, c=color, w=weight: {
-                "color": c, "weight": w, "opacity": 0.8
+            style_function=lambda _, c=color: {
+                "color": c, "weight": 2, "opacity": 0.8
             },
             tooltip=folium.Tooltip(
                 f"{row.get('name', 'unnamed')} — score: {row['predicted_score']:.3f}"

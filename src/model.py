@@ -19,9 +19,11 @@ DROP_COLS = ["segment_id", "avg_volume", "max_volume", TARGET]
 
 def load_data(path: str = FEATURE_PATH):
     df = pd.read_parquet(path)
-    feature_cols = [c for c in df.columns if c not in DROP_COLS]
-    X = df[feature_cols]
-    y = df[TARGET]
+    labeled = df[df[TARGET] > 0].copy()
+    print(f"Training on {len(labeled)} labeled segments (of {len(df)} total)")
+    feature_cols = [c for c in labeled.columns if c not in DROP_COLS]
+    X = labeled[feature_cols]
+    y = labeled[TARGET]
     return X, y
 
 
