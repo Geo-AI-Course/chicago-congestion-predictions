@@ -18,6 +18,10 @@ Two independent data sources are fetched and loaded into PostGIS:
 
 Intersection nodes are extracted separately: a node is counted as an intersection if its undirected degree is ≥ 3, meaning three or more roads meet there. These are stored in a separate `intersection_nodes` table and used in feature engineering.
 
+While the graph is loaded, **approximate edge betweenness centrality** is computed via NetworkX (k=500 sampled sources). This measures how often each road segment appears on the shortest path between any two points in the network and is stored directly as a column on `road_segments`.
+
+**Traffic signals** — OSM nodes tagged `highway=traffic_signals` are fetched via `osmnx.features_from_place` and stored in a `traffic_signals` table. These are used in feature engineering to count signalised intersections near each road segment.
+
 **Traffic counts** — ~2,000 count records are fetched as GeoJSON from the Chicago Data Portal. Each record is a point geometry with a `total_passing_vehicle_volume` reading at that location. At this stage `segment_id` is null; snapping happens in the next step.
 
 ---
@@ -55,8 +59,16 @@ The full feature matrix is assembled by joining `road_segments` with aggregated 
 | `speed_limit` | Parsed from `maxspeed` strings (e.g. `"30 mph"` → `30.0`); missing filled with global median |
 | `length` | Segment length in metres from OSM edge geometry |
 | `oneway` | Boolean cast to 0/1 |
+| `betweenness` | Approximate edge betweenness centrality (k=500 sampled sources via NetworkX) — how often this segment appears on shortest paths through the network; high betweenness = structural bottleneck |
 | `intersection_density` | Count of intersection nodes within 100 m of segment centroid |
-| `congestion_score` (target) | `avg_volume / max(avg_volume)` — normalized to [0, 1]; segments with no matched traffic count receive 0 |
+| `fan_in_count` | Number of road segments whose end node equals this segment's start node — high count means many roads merging in |
+| `lane_drop_downstream` | 1 if any immediately downstream segment has fewer lanes — flags where road capacity narrows |
+| `downstream_capacity_ratio` | `self.lanes / avg(downstream.lanes)` — quantifies severity of a lane drop; > 1 means this segment is wider than what follows |
+| `curvature_ratio` | `segment.length / straight_line_distance(start, end)` — 1 = straight road; higher values indicate curves that reduce effective capacity |
+| `is_near_ramp` | 1 if any `motorway_link` segment is within 150 m — on/off ramp weaving zones are classic bottlenecks |
+| `traffic_signal_count` | Count of traffic signal nodes within 100 m — signals create stop-go cycles that back up upstream traffic |
+| `neighbor_avg_volume` | Average traffic volume of directly adjacent (upstream + downstream) segments — captures intersection-level stress |
+| `congestion_score` (target) | `(avg_volume / (lanes × speed_limit)) / p99` clipped to [0, 1] — Volume/Capacity ratio normalised to the 99th percentile; measures whether a road is overloaded relative to its design capacity, not just how busy it is in absolute terms |
 
 ---
 
@@ -82,7 +94,24 @@ The saved model runs `predict` on the full feature matrix to produce a `predicte
 
 **Static map** — road segments are reprojected to EPSG:26916 (UTM, Illinois) for correct aspect ratio and plotted with a `RdYlGn_r` colormap (green = low congestion, red = high).
 
-**Interactive map** — a Folium map (CartoDB Positron tiles) renders each segment as a `GeoJson` layer. Every segment uses the same stroke weight; congestion level is expressed purely through color on a green → yellow → red spectrum (`RdYlGn_r` colormap). The color scale is normalized to the 99th percentile of predicted scores so a single outlier cannot wash out contrast across the rest of the map. Hovering over any segment shows its street name and predicted score.
+**Interactive map** — a Folium map (CartoDB Positron tiles) renders each segment as a `GeoJson` layer. Congestion level is expressed through both color (`RdYlGn_r`) and stroke weight (1–4 px), so heavily loaded roads are visually thicker. The color scale is normalised to the 99th percentile of predicted scores so a single outlier cannot wash out contrast across the rest of the map. Hovering over any segment shows its name, V/C score, and all active bottleneck indicators.
+
+**Bottleneck markers** — circle dots are overlaid at the centroid of genuine bottleneck locations. A segment qualifies only if it satisfies *both* gates:
+
+1. `predicted_score` is in the top `BOTTLENECK_SCORE_PCT` (default 5%) of all segments
+2. At least one structural cause is present (lane drop, 4+ roads merging, ramp within 150 m, 2+ signals within 100 m, or top-5% betweenness centrality)
+
+Markers are then capped at `MAX_BOTTLENECK_MARKERS` (default 400), keeping the most severe. Color indicates the primary cause:
+
+| Color | Cause |
+|---|---|
+| Red | Lane drop ahead |
+| Orange | 4+ roads merging in |
+| Blue | On/off ramp weaving zone |
+| Purple | 2+ traffic signals nearby |
+| Dark red | Top-5% network centrality |
+
+Both thresholds are tunable constants at the top of `src/visualize.py`.
 
 ---
 

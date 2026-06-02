@@ -26,8 +26,8 @@ python db_check.py
 Each `src/` script is a standalone entrypoint with a `__main__` block. Run in order:
 
 ```bash
-python src/ingest.py      # fetch OSM + Chicago traffic data → PostGIS
-python src/features.py    # spatial join, feature engineering → PostGIS + data/features.parquet
+python src/ingest.py      # fetch OSM + traffic data + traffic signals → PostGIS (computes betweenness)
+python src/features.py    # spatial join (150 m snap), bottleneck features, V/C target → PostGIS + data/features.parquet
 python src/model.py       # train RandomForest → data/model.joblib + data/feature_importance.png
 python src/visualize.py   # generate maps → data/congestion_map.html + data/congestion_static.png
 ```
@@ -40,30 +40,42 @@ Scripts are also importable as modules; they share `src/db.py` for the DB connec
 
 ```
 osmnx (Chicago OSM)  →  road_segments (PostGIS LINESTRING, SRID 4326)
+                     →  intersection_nodes (PostGIS POINT, SRID 4326)
+                     →  traffic_signals (PostGIS POINT, SRID 4326)
 Chicago Data Portal  →  traffic_counts (PostGIS POINT, SRID 4326)
                               ↓
-                    ST_DWithin snap (50 m tolerance)
+                    ST_DWithin snap (150 m tolerance)
                               ↓
                     segment_features (PostGIS + data/features.parquet)
+                    [bottleneck features: lane_drop, fan_in, curvature,
+                     betweenness, ramp proximity, signal density, V/C target]
                               ↓
-                    RandomForestRegressor (scikit-learn)
+                    RandomForestRegressor trained on labeled segments only
                               ↓
                     folium interactive map + matplotlib static map
+                    + bottleneck circle markers (top 5% score AND structural cause)
 ```
 
 **Module responsibilities:**
 - `src/db.py` — `get_engine()` reads `DB_URL` from `.env`; `ensure_postgis()` enables the extension
-- `src/ingest.py` — fetches external data and writes raw tables (`road_segments`, `traffic_counts`)
-- `src/features.py` — PostGIS spatial join, feature matrix construction, normalization; outputs `segment_features` table and `data/features.parquet`
-- `src/model.py` — loads parquet, trains/evaluates model, serializes to `data/model.joblib`
-- `src/visualize.py` — loads model + PostGIS geometries, produces both map outputs
+- `src/ingest.py` — fetches OSM road network (with edge betweenness centrality via NetworkX), traffic counts, and traffic signal locations; writes `road_segments`, `intersection_nodes`, `traffic_signals`, `traffic_counts`
+- `src/features.py` — PostGIS spatial join (150 m snap), bottleneck feature engineering, V/C ratio target; outputs `segment_features` table and `data/features.parquet`
+- `src/model.py` — filters to labeled segments only, trains/evaluates Random Forest, serializes to `data/model.joblib`
+- `src/visualize.py` — loads model + PostGIS geometries, produces static map and interactive map with bottleneck markers
 
 **PostGIS tables:**
 | Table | Geometry | Key columns |
 |---|---|---|
-| `road_segments` | LINESTRING 4326 | highway, lanes, maxspeed, length, oneway |
-| `traffic_counts` | POINT 4326 | total_volume, segment_id (after snap) |
-| `segment_features` | — | highway_* (one-hot), lanes, speed_limit, length, oneway, avg_volume, congestion_score |
+| `road_segments` | LINESTRING 4326 | highway, lanes, maxspeed, length, oneway, betweenness, u, v |
+| `intersection_nodes` | POINT 4326 | osmid, degree |
+| `traffic_signals` | POINT 4326 | osmid |
+| `traffic_counts` | POINT 4326 | total_passing_vehicle_volume, segment_id (after snap) |
+| `segment_features` | — | hw_* (one-hot), lanes, speed_limit, length, oneway, betweenness, fan_in_count, lane_drop_downstream, downstream_capacity_ratio, curvature_ratio, is_near_ramp, traffic_signal_count, neighbor_avg_volume, intersection_density, congestion_score (V/C ratio target) |
+
+**Bottleneck feature notes:**
+- `congestion_score` target is now a V/C ratio: `(avg_volume / (lanes × speed_limit)) / p99`, clipped to [0, 1]. Higher = road is overloaded relative to its design capacity.
+- Model is trained only on the ~1–5% of segments with actual traffic count data; it predicts scores for all segments at inference time.
+- Bottleneck markers in the interactive map require BOTH high predicted score (top 5% by default) AND a structural cause. Tune `BOTTLENECK_SCORE_PCT` and `MAX_BOTTLENECK_MARKERS` in `src/visualize.py`.
 
 ## CRS Convention
 
