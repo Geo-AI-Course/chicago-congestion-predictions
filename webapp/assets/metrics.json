@@ -1,0 +1,14 @@
+{
+  "total_segments": 77544,
+  "labeled_segments": 1250,
+  "labeled_pct": 1.61,
+  "traffic_count_records": 1279,
+  "traffic_counts_matched": 1271,
+  "traffic_signals": 4204,
+  "intersection_nodes": 26478,
+  "model": {
+    "rmse": 0.1276,
+    "mae": 0.1012,
+    "r2": 0.3985
+  }
+}

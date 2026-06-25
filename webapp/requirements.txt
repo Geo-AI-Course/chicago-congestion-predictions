@@ -1,0 +1,5 @@
+# Runtime deps for the deployed Streamlit app ONLY (no PostGIS/osmnx/sklearn).
+# The full data pipeline uses the repo-root requirements.txt.
+streamlit==1.36.0
+streamlit-folium==0.21.1
+folium==0.16.0

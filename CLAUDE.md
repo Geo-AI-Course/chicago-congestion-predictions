@@ -30,9 +30,21 @@ python src/ingest.py      # fetch OSM + traffic data + traffic signals → PostG
 python src/features.py    # spatial join (150 m snap), bottleneck features, V/C target → PostGIS + data/features.parquet
 python src/model.py       # train RandomForest → data/model.joblib + data/feature_importance.png
 python src/visualize.py   # generate maps → data/congestion_map.html + data/congestion_static.png
+python src/export.py      # bake slim web dataset from PostGIS → webapp/assets/ (for the Streamlit app)
 ```
 
 Scripts are also importable as modules; they share `src/db.py` for the DB connection.
+
+## Web App
+
+`webapp/app.py` is a Streamlit app that is the project's public deliverable. It reads ONLY the committed `webapp/assets/*` files produced by `src/export.py` — **no PostGIS, model, osmnx, or GDAL at runtime** — so it deploys cleanly to Streamlit Community Cloud (which can't host the database).
+
+```bash
+pip install -r webapp/requirements.txt   # app-only deps, separate from root requirements.txt
+streamlit run webapp/app.py
+```
+
+To refresh deployed data, re-run the pipeline then `python src/export.py` and commit the updated `webapp/assets/`. The major-road filter and simplification tolerance are tunable at the top of `src/export.py` (`MAJOR_HIGHWAYS`, `SIMPLIFY_TOLERANCE_M`). Keep `webapp/assets/` committed — it lives outside the gitignored `data/`.
 
 ## Architecture
 

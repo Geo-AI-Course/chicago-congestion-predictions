@@ -117,12 +117,12 @@ def _primary_cause(row) -> tuple:
     return "High congestion", "#c0392b"
 
 
-def _add_bottleneck_markers(m: folium.Map, gdf: gpd.GeoDataFrame):
-    """Overlay circle markers at genuine bottleneck pinpoints.
+def select_bottlenecks(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Return the genuine bottleneck segments, most severe first.
 
     A bottleneck requires BOTH high predicted congestion AND a structural cause —
-    a lane drop on an empty street is not a bottleneck. Markers are then capped
-    to the most severe MAX_BOTTLENECK_MARKERS so the map stays readable.
+    a lane drop on an empty street is not a bottleneck. The result is capped to
+    the most severe MAX_BOTTLENECK_MARKERS so downstream maps stay readable.
     """
     cols = set(gdf.columns)
 
@@ -143,15 +143,18 @@ def _add_bottleneck_markers(m: folium.Map, gdf: gpd.GeoDataFrame):
     if "betweenness"           in cols: has_cause |= gdf["betweenness"] >= bc_thresh
 
     # bottleneck = congested AND has a cause, then keep only the most severe
-    bottlenecks = (
+    return (
         gdf[congested & has_cause]
         .sort_values("predicted_score", ascending=False)
         .head(MAX_BOTTLENECK_MARKERS)
     )
-    print(
-        f"  Marking {len(bottlenecks)} bottleneck points "
-        f"(score >= {score_gate:.3f}, capped at {MAX_BOTTLENECK_MARKERS}) …"
-    )
+
+
+def _add_bottleneck_markers(m: folium.Map, gdf: gpd.GeoDataFrame):
+    """Overlay circle markers at genuine bottleneck pinpoints."""
+    bottlenecks = select_bottlenecks(gdf)
+    print(f"  Marking {len(bottlenecks)} bottleneck points "
+          f"(capped at {MAX_BOTTLENECK_MARKERS}) …")
 
     for _, row in bottlenecks.iterrows():
         centroid = row.geometry.centroid

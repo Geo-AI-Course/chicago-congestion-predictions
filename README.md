@@ -1,8 +1,94 @@
 # Chicago Road Congestion Predictions
 
+**Created by Ronen Gelmanovich and Shaked Ram**
+
+### ▶ Live app: **https://REPLACE-WITH-STREAMLIT-URL.streamlit.app**
+
+> Replace the link above with the public URL you get after deploying `webapp/app.py` to [Streamlit Community Cloud](https://share.streamlit.io). See [Deploy the app](#deploy-the-app).
+
 Predict congestion scores on Chicago road segments using OSM road network features and city traffic count data, visualized as both static and interactive maps.
 
-**Stack:** Python · osmnx · GeoPandas · PostGIS (Docker) · scikit-learn · folium
+**Stack:** Python · osmnx · GeoPandas · PostGIS (Docker) · scikit-learn · folium · Streamlit
+
+![Chicago congestion map](webapp/assets/congestion_static.png)
+
+---
+
+## Project Summary
+
+**Problem.** Identify *where* Chicago's road network chokes relative to its design capacity, and *why* — predicting a congestion (volume/capacity) score for every road segment, not just the ~1.6% with measured counts, and pinpointing the structural cause of each genuine bottleneck.
+
+**Why this is a GeoAI project.** The entire pipeline is spatial. Three GIS layers (road network, traffic signals, traffic counts) are stored as PostGIS geometries (SRID 4326) and joined spatially: traffic counts are snapped to their nearest road segment with a 150 m `ST_DWithin` lateral join over a GIST index; intersection, signal, and ramp density are computed by proximity (`ST_DWithin` in metres via geography casts); distances/areas use UTM EPSG:26916 (`ST_Transform`); and **network betweenness centrality** captures each segment's structural role in the graph. The model then predicts a phenomenon (congestion) continuously across space.
+
+**Data** (counts from the latest run — see `webapp/assets/metrics.json`):
+
+| Layer | Source | Records |
+|---|---|---|
+| Road segments | OpenStreetMap via `osmnx` | **77,544** |
+| Intersection nodes | OSM (degree ≥ 3) | **26,478** |
+| Traffic signals | OSM (`highway=traffic_signals`) | **4,204** |
+| Traffic counts | [Chicago Data Portal](https://data.cityofchicago.org/Transportation/Average-Daily-Traffic-Counts/pfsx-4HKf) | **1,279** (1,271 snapped to a segment) |
+| Labeled segments (≥1 matched count) | — | **1,250 (1.6%)** — the training set |
+
+**Data preparation.** List-valued OSM fields collapsed; `lanes` imputed by per-highway-type median then global median; `maxspeed` strings parsed to numeric (`"30 mph"` → `30`); highway type one-hot encoded; 13 bottleneck features engineered via PostGIS spatial joins; target = volume/capacity ratio normalised to its 99th percentile and clipped to [0, 1]. Detail in [Stage 2](#stage-2--feature-engineering-srcfeaturespy).
+
+**Machine learning.** **Supervised regression** — a `RandomForestRegressor` tuned with 5-fold `GridSearchCV`, trained only on labeled segments and used to score all 77,544. Held-out test metrics from the latest run: **RMSE 0.126 · MAE 0.101 · R² 0.45** (vs. a mean-prediction baseline).
+
+**Stage reached.** **Descriptive + Predictive** — the app describes the current network (scores + attributed bottleneck causes) and predicts scores for unlabeled segments. A *prescriptive* extension (forecasting emerging bottlenecks from population growth) is scoped as future work in [PLAN.md](PLAN.md) M7.
+
+---
+
+## Methodology — Features, Cleaning & Indexes
+
+### What may cause congestion (the features)
+
+We don't measure traffic on most roads, so the model learns congestion from the *structural* characteristics that create it. The engineered features group into four mechanisms:
+
+**1. Capacity & geometry — how much traffic the road can physically carry**
+- `lanes`, `speed_limit`, `length` — raw throughput capacity of the segment.
+- `lane_drop_downstream` (1/0) and `downstream_capacity_ratio` — flag and quantify where the road *narrows ahead*. A 3-lane road feeding a 2-lane one is a classic choke point; the ratio captures how severe the drop is.
+- `curvature_ratio` (`length ÷ straight-line distance`) — curves force drivers to slow, reducing effective capacity. 1.0 = straight; higher = more curved.
+- `oneway` — one-way streets behave differently from two-way under load.
+
+**2. Network structure — the segment's role in the wider graph**
+- `betweenness` — approximate edge betweenness centrality (NetworkX, k=500 sampled sources): how often a segment lies on the shortest path between any two points. High betweenness = a structural funnel the whole city routes through.
+- `fan_in_count` — number of segments whose end node is this segment's start node, i.e. how many roads *merge into* it. Many roads converging = merge congestion.
+- `intersection_density` — intersection nodes (degree ≥ 3) within 100 m of the segment centroid; denser grids back up more easily.
+
+**3. Proximity hazards — nearby features that create stop-and-go flow**
+- `is_near_ramp` (1/0) — a `motorway_link` (on/off ramp) within 150 m. Ramp weaving zones are textbook bottlenecks.
+- `traffic_signal_count` — signals within 100 m. Each signal injects stop-go cycles that queue traffic upstream.
+
+**4. Demand context & road class**
+- `neighbor_avg_volume` — measured volume on directly adjacent (upstream + downstream) segments, propagating demand signal to unlabeled roads.
+- `hw_*` — one-hot road classification (motorway, trunk, primary, …), since a primary arterial and a residential street congest very differently.
+
+**Target — `congestion_score`.** Not raw volume but a **volume/capacity (V/C) ratio**: `(avg_volume ÷ (lanes × speed_limit)) ÷ p99`, clipped to [0, 1]. This measures whether a road is *overloaded relative to its own design capacity* — a busy 6-lane highway may be fine, while a saturated 2-lane arterial is the real problem.
+
+### How the data was cleaned
+
+| Issue | Handling |
+|---|---|
+| OSM returns **list-valued fields** (e.g. multiple `lanes`/`maxspeed` per edge) | Collapsed to a single value (first / parsed token) |
+| **Missing `lanes`** | Imputed with the median for that highway type, then the global median as a fallback |
+| **`maxspeed` as free text** (`"30 mph"`, `"30;40"`) | Regex-parsed to a number; missing filled with the global median → `speed_limit` |
+| **Categorical `highway`** | One-hot encoded (`pd.get_dummies`, `hw_*` columns) |
+| **Traffic counts not on any road** (GPS noise) | Points with no segment within 150 m are left unmatched and excluded from volume aggregation |
+| **Multiple counts per segment** | Aggregated to `avg_volume` / `max_volume` per segment |
+| **Target outliers / undefined V/C** | Normalised to the 99th percentile and clipped to [0, 1]; segments with no measured volume get score 0 and are excluded from *training* (but still scored at inference) |
+
+### Database indexes
+
+Indexes are created in `src/ingest.py` immediately after each table is written, because every feature query is a spatial or topological join that would otherwise table-scan ~77k segments:
+
+| Index | Table / column | Purpose |
+|---|---|---|
+| `road_segments_geom_idx` | `road_segments USING GIST(geometry)` | Powers the 150 m `ST_DWithin` snap and `<->` nearest-neighbour search, plus all proximity joins (signals, ramps, intersections) |
+| `intersection_nodes_geom_idx` | `intersection_nodes USING GIST(geometry)` | Intersection-density proximity counts |
+| `traffic_signals_geom_idx` | `traffic_signals USING GIST(geometry)` | Signal-density proximity counts |
+| `traffic_counts_geom_idx` | `traffic_counts USING GIST(geometry)` | Fast spatial lookups when snapping counts |
+| `road_segments_u_idx` | `road_segments(u)` (B-tree) | Topology self-joins on the **start** node |
+| `road_segments_v_idx` | `road_segments(v)` (B-tree) | Topology self-joins on the **end** node — together `u`/`v` drive the fan-in, lane-drop, and neighbour-volume joins (`rs2.u = rs1.v`) |
 
 ---
 
@@ -115,6 +201,33 @@ Both thresholds are tunable constants at the top of `src/visualize.py`.
 
 ---
 
+### Stage 5 — Web Export (`src/export.py`)
+
+PostGIS is the analytical backbone, but a hosted app can't query a local database. This step **extracts a slim, cleaned dataset from PostGIS** for the public app: predictions are merged onto geometries, filtered to the major-road network (motorway → tertiary + links), simplified (10 m Douglas-Peucker in UTM), coordinate-rounded, and baked into GeoJSON with precomputed colors/weights. The 127 MB local folium map becomes a **~6 MB** `webapp/assets/segments.geojson` the browser can load. Bottleneck points and a `metrics.json` (record counts + model metrics) are written alongside. Tunable via `MAJOR_HIGHWAYS` and `SIMPLIFY_TOLERANCE_M` at the top of `src/export.py`.
+
+---
+
+## The App
+
+`webapp/app.py` is a [Streamlit](https://streamlit.io) app that reads only the `webapp/assets/*` files baked by `src/export.py` — **no database, model, or GDAL at runtime** — and renders the interactive congestion map, bottleneck markers, model metrics, and data-source links.
+
+**Run locally:**
+
+```bash
+pip install -r webapp/requirements.txt
+streamlit run webapp/app.py        # opens http://localhost:8501
+```
+
+### Deploy the app
+
+1. Push this repo (including the committed `webapp/assets/`) to GitHub under the **Geo-AI-Course** org.
+2. At [share.streamlit.io](https://share.streamlit.io), create an app pointing at **`webapp/app.py`** (Streamlit auto-installs `webapp/requirements.txt`).
+3. Copy the resulting public URL into the **Live app** link at the top of this README.
+
+To refresh the deployed data, re-run the pipeline + `python src/export.py`, then commit the updated `webapp/assets/`.
+
+---
+
 ## Quickstart
 
 ### 1. Start PostGIS
@@ -170,7 +283,8 @@ python db_check.py
 python src/ingest.py      # fetch OSM + traffic data → PostGIS
 python src/features.py    # spatial join + feature matrix → data/features.parquet
 python src/model.py       # train Random Forest → data/model.joblib
-python src/visualize.py   # generate maps → data/congestion_map.html + data/congestion_static.png
+python src/visualize.py   # generate local maps → data/congestion_map.html + data/congestion_static.png
+python src/export.py      # bake slim web dataset → webapp/assets/  (for the Streamlit app)
 ```
 
 ---
@@ -182,8 +296,11 @@ python src/visualize.py   # generate maps → data/congestion_map.html + data/co
 | `data/features.parquet` | Feature matrix used for training |
 | `data/model.joblib` | Serialized Random Forest model |
 | `data/feature_importance.png` | Bar chart of feature importances |
-| `data/congestion_map.html` | Interactive folium map with segment tooltips |
+| `data/congestion_map.html` | Interactive folium map with segment tooltips (local, full network) |
 | `data/congestion_static.png` | Static matplotlib choropleth map |
+| `webapp/assets/segments.geojson` | Slim major-road map data for the deployed app (committed) |
+| `webapp/assets/bottlenecks.geojson` | Bottleneck points + causes for the app (committed) |
+| `webapp/assets/metrics.json` | Record counts + model test metrics (committed) |
 
 ---
 
@@ -199,7 +316,14 @@ congestion-predictions/
 │   ├── ingest.py          # load OSM road network + city traffic counts
 │   ├── features.py        # spatial join, feature engineering
 │   ├── model.py           # Random Forest training and evaluation
-│   └── visualize.py       # static + interactive folium maps
+│   ├── visualize.py       # static + interactive folium maps
+│   └── export.py          # bake slim web dataset from PostGIS → webapp/assets/
+├── webapp/
+│   ├── app.py             # public Streamlit app (reads webapp/assets/, no DB)
+│   ├── requirements.txt   # app-only runtime deps
+│   └── assets/            # committed GeoJSON + metrics the app renders
+├── .streamlit/
+│   └── config.toml        # Streamlit theme/server config
 ├── docker-compose.yml     # PostGIS container (port 5432)
 ├── requirements.txt
 ├── .env                   # DB credentials (gitignored)

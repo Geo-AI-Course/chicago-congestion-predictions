@@ -26,7 +26,7 @@
   ├── requirements.txt
   └── PLAN.md
   ```
-- [ ] Verify PostGIS connection and `postgis` extension enabled
+- [x] Verify PostGIS connection and `postgis` extension enabled
 
 ---
 
@@ -88,6 +88,16 @@
 - [x] Interactive map: `folium` choropleth overlay, tooltips showing segment name + predicted score
 - [x] Highlight top-10 predicted bottleneck segments on the map
 - [x] Export final map as `data/congestion_map.html`
+
+---
+
+## Milestone 6.5 — Public Web App & Deployment
+
+- [x] Add `src/export.py` to bake a slim, DB-free dataset from PostGIS into `webapp/assets/` (major roads, simplified geometry, precomputed colors, bottleneck points, `metrics.json`)
+- [x] Build Streamlit app `webapp/app.py` (reads `webapp/assets/`, no DB/model/GDAL at runtime) with map, bottleneck markers, metrics, and data-source links
+- [x] App-only `webapp/requirements.txt` + `.streamlit/config.toml`
+- [x] Verify app runs locally against the baked assets with PostGIS stopped
+- [ ] Deploy to Streamlit Community Cloud and add the public URL to the top of `README.md` *(manual: requires GitHub push under Geo-AI-Course org)*
 
 ---
 
